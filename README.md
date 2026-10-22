@@ -13,9 +13,18 @@ through the public REST APIs. Each run writes the exported file to an export fol
 | `export_all_catalog_sources.py` | All catalog sources as JSON | `GET /data360/catalog-source-management/v1/catalogsources` |
 | `export_custom_roles_privileges.py` | Custom (non-system) roles with privileges as JSON; summary per role in the log | IICS v3 `GET /public/core/v3/roles` |
 
-Shared code: `idmc_client.py` (config, authentication, API sessions, bulk export job flow) and
-`run_log.py` (log files). `run_scheduled.sh` runs a script from cron or systemd on Linux
-(see [Scheduling on Linux](#scheduling-on-linux)).
+Other files:
+
+| File | Purpose |
+|---|---|
+| `idmc_client.py` | Shared code: config, authentication, HTTP client (standard library `urllib`), bulk export job flow |
+| `run_log.py` | Shared code: log files |
+| `idmc_config.example.properties` | Config template; copy it to `idmc_config.properties` (see [Configuration](#configuration-idmc_configproperties)) |
+| `run_scheduled.sh` | Runs a script from cron or systemd on Linux (see [Scheduling on Linux](#scheduling-on-linux)) |
+| `SKILL.md` | Instructions for AI coding agents (Claude Code skill) |
+
+Created locally and not in version control: `idmc_config.properties`, `idmc_config.jwt` (cached JWT),
+`export/` and `logs/`.
 
 ## Requirements
 
@@ -97,7 +106,8 @@ few hours; keep it private like the password. `.gitignore` excludes `idmc_config
 ## Usage
 
 Run the scripts from the folder that should receive `export/` and `logs/`; the config file is
-looked up next to the scripts unless `--config` is given. Every script supports `--help`.
+looked up next to the scripts unless `--config` is given. Every script supports `--help`. On RHEL the
+interpreter is `python3`; on Windows `py` or `python`.
 
 ```bash
 python export_business_assets.py
@@ -198,8 +208,9 @@ user profile. After testing, delete the password file if you no longer need it.
 
 ## Scheduling on Linux
 
-`run_scheduled.sh` wraps a script for unattended runs. It runs from the script folder with `python3`, skips a run while the same script is still running (`flock`), appends
-console output to `logs/scheduler.log` and returns the script's exit code (0 = success, 1 = failed).
+`run_scheduled.sh` wraps a script for unattended runs. It runs from the script folder with `python3`,
+skips a run while the same script is still running (`flock`), appends console output to
+`logs/scheduler.log` and returns the script's exit code (0 = success, 1 = failed).
 Per-run details stay in `logs/<export name>.log` as usual.
 
 ### Step 1: Install the scripts
@@ -228,9 +239,9 @@ iics.baseApiUrl.v3=https://emw1.dm-em.informaticacloud.com/saas
 # absolute paths, so the location does not depend on the current folder
 exportFolder=/opt/idmc-cdgc-export/export
 logFolder=/opt/idmc-cdgc-export/logs
-# only if the server needs them (see "Proxy and certificates")
+# only if the server needs them (see "Proxy and certificates"); empty caBundle = system trust store
 proxy=http://proxy.example.com:8080
-caBundle=/etc/pki/tls/certs/ca-bundle.crt
+caBundle=
 username=<IDMC service user>
 password=
 # cron: the password file below; systemd timer: leave empty and use the encrypted credential (Step 4b)

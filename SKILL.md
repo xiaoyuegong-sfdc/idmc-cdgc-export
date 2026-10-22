@@ -10,6 +10,7 @@ Scripts live next to this file. Read `README.md` for all options; this file says
 ## Before running
 
 1. Only Python 3.9+ is needed (standard library only); never `pip install` anything for these scripts.
+   Use `python3` on Linux/RHEL, `py` or `python` on Windows (the commands below say `python`).
 2. If `idmc_config.properties` is missing, copy it from `idmc_config.example.properties`. Check it without
    revealing secrets. Never print, log or echo the `password` or `proxy` values, nor the content of the
    `passwordFile`, the JWT file (`*.jwt`) or `IDMC_PASSWORD`; mask them, e.g.
@@ -20,10 +21,12 @@ Scripts live next to this file. Read `README.md` for all options; this file says
    prompt: if a run stops with "no password", ask the user to run it themselves (`! python <script>`) or to
    set `IDMC_PASSWORD` / `passwordFile`; never ask them to type the password into the chat. Without
    `username`, the scripts use the JWT in `jwtFile`; a JWT is valid for a few hours. If a script fails
-   with "JWT ... expired", ask the user to put a fresh JWT into that file or to set `username`, then rerun. Do not go looking
-   for other credential files.
+   with "JWT ... expired", ask the user to put a fresh JWT into that file or to set `username`, then
+   rerun. Do not go looking for other credential files. There is no `jwt` config key any more; a leftover
+   one only prints a warning.
 4. Network: `TLS certificate check failed` means a TLS-inspecting proxy; ask for its CA file and set
-   `caBundle`. Connection or proxy errors: set `proxy` (never print proxy passwords).
+   `caBundle` (or have it added to the system trust store). Never disable certificate checks.
+   Connection or proxy errors: set `proxy` (never print proxy passwords).
 
 ## Which script
 

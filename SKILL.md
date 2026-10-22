@@ -11,16 +11,16 @@ Scripts live next to this file. Read `README.md` for all options; this file says
 
 1. `pip install -r requirements.txt` if `requests` is missing.
 2. If `idmc_config.properties` is missing, copy it from `idmc_config.example.properties`. Check it without
-   revealing secrets. Never print, log or echo the `password` or `jwt` values, nor the content of the
-   `passwordFile`, the JWT cache (`*.jwt`) or `IDMC_PASSWORD`; mask them, e.g.
-   `sed 's/^\(jwt\|password\|proxy\)=..*/\1=***/' idmc_config.properties`.
+   revealing secrets. Never print, log or echo the `password` or `proxy` values, nor the content of the
+   `passwordFile`, the JWT file (`*.jwt`) or `IDMC_PASSWORD`; mask them, e.g.
+   `sed 's/^\(password\|proxy\)=..*/\1=***/' idmc_config.properties`.
 3. Authentication: if `username` is set, the scripts log in and cache a new JWT in `jwtFile`
    (default `idmc_config.jwt`). The password comes from `password`, the systemd credential `idmc_password`,
    `IDMC_PASSWORD`, `passwordFile`, else a terminal prompt (README "Password"). You cannot answer the
    prompt: if a run stops with "no password", ask the user to run it themselves (`! python <script>`) or to
    set `IDMC_PASSWORD` / `passwordFile`; never ask them to type the password into the chat. Without
-   `username`, the scripts use `jwt`, else the cached JWT; a JWT is valid for a few hours. If a script fails
-   with "JWT ... expired", ask the user for a fresh JWT or to set `username`, then rerun. Do not go looking
+   `username`, the scripts use the JWT in `jwtFile`; a JWT is valid for a few hours. If a script fails
+   with "JWT ... expired", ask the user to put a fresh JWT into that file or to set `username`, then rerun. Do not go looking
    for other credential files.
 4. Network: `TLS certificate check failed` means a TLS-inspecting proxy; ask for its CA file and set
    `caBundle`. Connection or proxy errors: set `proxy` (never print proxy passwords).

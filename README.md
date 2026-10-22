@@ -42,8 +42,7 @@ control, as it can hold secrets). Plain `key=value` lines; `#` starts a comment;
 | `username` | empty | If set, each run logs in (password: see [Password](#password)) and caches a fresh JWT in `jwtFile` |
 | `password` | empty | Plain-text password; better leave empty and use one of the other password sources |
 | `passwordFile` | empty | File containing only the password (relative paths: from the config file's folder) |
-| `jwtFile` | `idmc_config.jwt` | Where the JWT of the last login is cached (relative paths: from the config file's folder) |
-| `jwt` | empty | IDMC JWT pasted by hand, used when `username` is empty; empty = the JWT cached in `jwtFile` |
+| `jwtFile` | `idmc_config.jwt` | Where the JWT of the last login is cached (relative paths: from the config file's folder); used for authentication when `username` is empty |
 
 ### Authentication
 
@@ -52,8 +51,9 @@ control, as it can hold secrets). Plain `key=value` lines; `#` starts a comment;
   API (`POST {baseUrl}/identity-service/api/v1/jwt/Token?client_id=idmc_api&nonce=1234`) and caches the
   JWT in `jwtFile` (default `idmc_config.jwt`, created with mode 600 on Linux). The config file itself is
   never written.
-- **`username` empty:** the `jwt` from the config file is used, else the JWT cached in `jwtFile`. The
-  script stops with a clear message if it is missing or expired; paste a fresh JWT or set `username`.
+- **`username` empty:** the JWT in `jwtFile` is used, i.e. the one cached by an earlier login, or one you
+  pasted into that file (only the token, on one line). The script stops with a clear message if it is
+  missing or expired; set `username` or put a fresh JWT into the file.
 
 The org ID and name are read from the JWT. The JWT is sent as `Authorization: Bearer` together with
 `X-INFA-ORG-ID` (CDGC API) and as `INFA-SESSION-ID` (IICS v3 API).
@@ -139,7 +139,8 @@ Network errors while waiting for a job are retried until `--timeout`; the job ke
 1. Copy the folder (scripts, `requirements.txt`, `idmc_config.example.properties`), copy
    `idmc_config.example.properties` to `idmc_config.properties` and run `pip install -r requirements.txt`.
 2. Edit `idmc_config.properties`: set `baseUrl` / `iics.baseApiUrl.v3` for your pod, then either
-   `username` (password from one of the [password sources](#password), e.g. the prompt), or a fresh `jwt`.
+   `username` (password from one of the [password sources](#password), e.g. the prompt), or put a fresh JWT into
+   `idmc_config.jwt`.
 3. Smoke test with the fast scripts (a few seconds each):
    `python export_all_catalog_sources.py` and `python export_custom_roles_privileges.py`.
 4. Then `python export_business_assets.py` (about 1.5 minutes) and, if needed, the technical asset exports.
@@ -238,7 +239,6 @@ username=<IDMC service user>
 password=
 # cron: the password file below; systemd timer: leave empty and use the encrypted credential (Step 4b)
 passwordFile=/home/idmc/.idmc/password
-jwt=
 ```
 
 Keep the password out of the config. Create the password file as the `idmc` user; the input is hidden

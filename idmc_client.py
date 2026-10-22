@@ -131,7 +131,7 @@ def find_password(cfg, config_file):
             return password, "prompt"
     die(f"no password for {cfg['username']}: set passwordFile in {config_file}, the {PASSWORD_ENV} environment "
         f"variable or the systemd credential {PASSWORD_CREDENTIAL}, or run from a terminal to be prompted "
-        "(leave username empty to use a JWT instead)")
+        "(leave username empty to use the JWT cached in jwtFile instead)")
 
 
 def mask_url(url):
@@ -212,6 +212,8 @@ class Cdgc:
         # the JWT of the last login goes to its own file (default idmc_config.jwt), so the config holds no secrets
         jwt_file = config_path(config_file, cfg.get("jwtFile") or
                                os.path.splitext(os.path.basename(config_file))[0] + ".jwt")
+        if cfg.pop("jwt", None):
+            print(f"WARNING: jwt in {config_file} is no longer used; remove it (JWTs are kept in {jwt_file})")
         if cfg.get("username"):
             password, source = find_password(cfg, config_file)
             print(f"Logging in to {base_url} as {cfg['username']} (password from {source})")
@@ -219,19 +221,17 @@ class Cdgc:
             write_secret(jwt_file, cfg["jwt"])
             print(f"  new JWT saved to {jwt_file}")
             self.auth_mode = f"logged in as {cfg['username']} (password from {source}), new JWT saved to {jwt_file}"
-        elif cfg.get("jwt"):
-            self.auth_mode = f"using JWT from {config_file}"
         elif os.path.isfile(jwt_file):
             cfg["jwt"] = read_secret(jwt_file, "JWT file")
             self.auth_mode = f"using JWT from {jwt_file}"
         else:
-            die(f"{config_file}: set username (password sources: see README), or jwt")
+            die(f"{config_file}: set username (password sources: see README), or put a JWT into {jwt_file}")
 
         payload = jwt_payload(cfg["jwt"])
         if payload["exp"] <= time.time():
             die(f"JWT ({self.auth_mode}) expired at "
                 f"{datetime.fromtimestamp(payload['exp'], timezone.utc):%Y-%m-%d %H:%M:%S} UTC; "
-                "paste a fresh JWT or set username")
+                "set username, or put a fresh JWT into the JWT file")
         self.auth_mode += f"; {network_summary(cfg)}"
         self.export_folder = cfg.get("exportFolder") or DEFAULT_EXPORT_FOLDER
         self.org_id = payload.get("current_org_id") or payload["org_id"]

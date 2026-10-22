@@ -19,8 +19,8 @@ Shared code: `idmc_client.py` (config, authentication, API sessions, bulk export
 
 ## Requirements
 
-- Python 3.9 or newer (e.g. RHEL 9 `python3`, 3.9.x)
-- `pip install -r requirements.txt` (only `requests`)
+- Python 3.9 or newer (e.g. RHEL 9 `python3`, 3.9.x). Nothing else: the scripts use only the Python standard
+  library, so there is no `pip install` and no third-party package.
 - Network access to the IDMC pod, e.g. `dm-em.informaticacloud.com`, `cdgc-api.dm-em.informaticacloud.com`
   and `emw1.dm-em.informaticacloud.com`
 - An IDMC user with access to CDGC (Metadata Command Center / Data Governance and Catalog) and,
@@ -36,7 +36,7 @@ control, as it can hold secrets). Plain `key=value` lines; `#` starts a comment;
 | `baseUrl` | `https://dm-em.informaticacloud.com` | IDMC pod login URL. The CDGC API host is derived from it: `https://cdgc-api.<host>` |
 | `iics.baseApiUrl.v3` | `https://emw1.dm-em.informaticacloud.com/saas` | IICS v3 REST API base URL (roles export) |
 | `proxy` | empty | HTTP(S) proxy for all API calls, e.g. `http://proxy.example.com:8080` or `http://user:password@proxy:8080`. Empty = `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` environment variables, if set |
-| `caBundle` | empty | CA certificate file (PEM) for verifying the API hosts' TLS certificates, e.g. when a proxy inspects TLS with a corporate CA. Empty = `REQUESTS_CA_BUNDLE` environment variable, else the CAs bundled with `requests` |
+| `caBundle` | empty | CA certificate file (PEM) for verifying the API hosts' TLS certificates, e.g. when a proxy inspects TLS with a corporate CA. Empty = the system trust store (RHEL: `/etc/pki/tls/certs/ca-bundle.crt`, also `SSL_CERT_FILE` if set; Windows: the Windows certificate store) |
 | `exportFolder` | `export` | Folder for exported files (relative to the current folder) |
 | `logFolder` | `logs` | Folder for log files (relative to the current folder) |
 | `username` | empty | If set, each run logs in (password: see [Password](#password)) and caches a fresh JWT in `jwtFile` |
@@ -64,13 +64,13 @@ The org ID and name are read from the JWT. The JWT is sent as `Authorization: Be
 Authenticate task records which proxy (password masked) and CA bundle were used.
 
 - Certificate error (`TLS certificate check failed ...`): the network replaces the server certificates,
-  typically a TLS-inspecting proxy. Set `caBundle` to a PEM file containing that CA. On RHEL, add the
-  corporate CA to the system trust store and point `caBundle` at it:
+  typically a TLS-inspecting proxy. Either add that CA to the system trust store, which the scripts use by
+  default, or set `caBundle` to a PEM file containing it. On RHEL:
   ```bash
   sudo cp corporate-ca.pem /etc/pki/ca-trust/source/anchors/
-  sudo update-ca-trust
-  # idmc_config.properties: caBundle=/etc/pki/tls/certs/ca-bundle.crt
+  sudo update-ca-trust          # then leave caBundle empty
   ```
+  On Windows, a corporate CA installed in the Windows certificate store is trusted without `caBundle`.
 - Proxy errors while waiting for an export job are retried like other network errors until `--timeout`.
 
 ### Password
@@ -136,8 +136,8 @@ Network errors while waiting for a job are retried until `--timeout`; the job ke
 
 ## Testing in a new environment
 
-1. Copy the folder (scripts, `requirements.txt`, `idmc_config.example.properties`), copy
-   `idmc_config.example.properties` to `idmc_config.properties` and run `pip install -r requirements.txt`.
+1. Copy the folder and copy `idmc_config.example.properties` to `idmc_config.properties`. Nothing needs to be
+   installed besides Python 3.9+.
 2. Edit `idmc_config.properties`: set `baseUrl` / `iics.baseApiUrl.v3` for your pod, then either
    `username` (password from one of the [password sources](#password), e.g. the prompt), or put a fresh JWT into
    `idmc_config.jwt`.
@@ -153,8 +153,6 @@ Use PowerShell, cmd or Windows Terminal; `run_scheduled.sh` is for Linux only.
 
 ```powershell
 cd C:\path\to\idmc-cdgc-export
-py -3 -m venv .venv
-.venv\Scripts\python -m pip install -r requirements.txt
 Copy-Item idmc_config.example.properties idmc_config.properties
 notepad idmc_config.properties          # set username, leave password empty
 ```
@@ -168,19 +166,19 @@ Pick one way to supply the password:
 **A. Prompt (simplest):** just run a script and type the password; the input is hidden.
 
 ```powershell
-.venv\Scripts\python export_all_catalog_sources.py
+py export_all_catalog_sources.py
 # IDMC password for <username>:
 ```
 
 The prompt needs a console window. In Git Bash (mintty) the script stops with "no password" instead; use
-PowerShell, or `winpty python ...`, or option B.
+PowerShell, or `winpty py ...`, or option B.
 
 **B. Environment variable for the current window**, to run several scripts with one entry:
 
 ```powershell
 $env:IDMC_PASSWORD = [Net.NetworkCredential]::new('', (Read-Host 'IDMC password' -AsSecureString)).Password
-.venv\Scripts\python export_custom_roles_privileges.py
-.venv\Scripts\python export_business_assets.py
+py export_custom_roles_privileges.py
+py export_business_assets.py
 Remove-Item Env:IDMC_PASSWORD           # or close the window
 ```
 
@@ -200,8 +198,7 @@ user profile. After testing, delete the password file if you no longer need it.
 
 ## Scheduling on Linux
 
-`run_scheduled.sh` wraps a script for unattended runs. It runs from the script folder, uses
-`.venv/bin/python` if present, skips a run while the same script is still running (`flock`), appends
+`run_scheduled.sh` wraps a script for unattended runs. It runs from the script folder with `python3`, skips a run while the same script is still running (`flock`), appends
 console output to `logs/scheduler.log` and returns the script's exit code (0 = success, 1 = failed).
 Per-run details stay in `logs/<export name>.log` as usual.
 
@@ -213,8 +210,7 @@ sudo unzip idmc-cdgc-export.zip -d /opt                        # creates /opt/id
 sudo chown -R idmc:idmc /opt/idmc-cdgc-export
 sudo -iu idmc                                                  # continue as that user
 cd /opt/idmc-cdgc-export
-python3 -m venv .venv                                          # RHEL 9: built in; Debian/Ubuntu: apt install python3-venv
-.venv/bin/pip install -r requirements.txt
+python3 --version                                              # 3.9 or newer; no packages to install
 chmod +x run_scheduled.sh
 command -v flock || echo "install util-linux"                  # flock is part of util-linux
 ```
@@ -365,7 +361,7 @@ systemctl status idmc-export-business-assets.service     # last result
 
 Other schedules: `OnCalendar=Sun *-*-* 02:00:00` (weekly), `OnCalendar=*-*-* 00/6:00:00` (every 6 hours);
 check with `systemd-analyze calendar "Sun *-*-* 02:00:00"`. Proxy and CA file come from the config file
-(`proxy`, `caBundle`); alternatively set `Environment=HTTPS_PROXY=...` / `Environment=REQUESTS_CA_BUNDLE=...`
+(`proxy`, `caBundle`); alternatively set `Environment=HTTPS_PROXY=...` / `Environment=SSL_CERT_FILE=...`
 in the `[Service]` section (cron: `HTTPS_PROXY=...` lines at the top of the crontab).
 
 ### Step 5: Clean up old files

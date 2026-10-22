@@ -9,7 +9,7 @@ Scripts live next to this file. Read `README.md` for all options; this file says
 
 ## Before running
 
-1. `pip install -r requirements.txt` if `requests` is missing.
+1. Only Python 3.9+ is needed (standard library only); never `pip install` anything for these scripts.
 2. If `idmc_config.properties` is missing, copy it from `idmc_config.example.properties`. Check it without
    revealing secrets. Never print, log or echo the `password` or `proxy` values, nor the content of the
    `passwordFile`, the JWT file (`*.jwt`) or `IDMC_PASSWORD`; mask them, e.g.

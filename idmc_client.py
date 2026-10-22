@@ -3,23 +3,29 @@
 - Config:   load_config for idmc_config.properties (key=value, '#' comments)
 - Secrets:  find_password (config, systemd credential, IDMC_PASSWORD, passwordFile, prompt); JWT cache file
 - Auth:     login() = User Login API -> sessionId -> User JWT API -> JWT
-- Network:  ApiSession applies the optional proxy and caBundle settings to every API call
+- Network:  ApiSession = small HTTP client on the standard library (no third-party packages) that applies the
+            optional proxy and caBundle settings to every API call
 - Cdgc:     authenticated sessions for the CDGC API (cdgc-api.<pod>) and the IICS v3 API
 - Exports:  add_export_args / run_export = start a CDGC Bulk Export job, wait for it, download the file
 """
 import base64
 import getpass
+import http.client
 import json
 import os
 import re
+import ssl
 import stat
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 
-import requests
-
 from run_log import RunLog
+
+json_module = json  # ApiSession.request() has a json= (request body) parameter that hides the module name
 
 DEFAULT_BASE_URL = "https://dm-em.informaticacloud.com"
 DEFAULT_BASE_API_URL_V3 = "https://emw1.dm-em.informaticacloud.com/saas"
@@ -27,6 +33,7 @@ DEFAULT_EXPORT_FOLDER = "export"  # relative to the current folder
 DEFAULT_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "idmc_config.properties")
 # Job statuses that mean the export is still in progress.
 ACTIVE_STATUSES = {"CREATED", "QUEUED", "SUBMITTED", "PENDING", "STARTING", "RUNNING", "IN_PROGRESS"}
+HTTP_TIMEOUT = 120  # seconds to wait for a connection or for the next bytes of a response
 # Password sources besides the config file: systemd credential (LoadCredential[Encrypted]=idmc_password:...)
 # and environment variable
 PASSWORD_CREDENTIAL = "idmc_password"
@@ -139,39 +146,96 @@ def mask_url(url):
     return re.sub(r"//[^@/]+@", "//***@", url)
 
 
-class ApiSession(requests.Session):
-    """requests.Session that sends every call through the configured proxy and CA bundle.
+class NetworkError(Exception):
+    """Connection failure, timeout or proxy error; Cdgc.wait() retries these."""
+
+
+class Response:
+    """The parts of an HTTP response the scripts use: status_code, ok, headers, text, json(), iter_content()."""
+
+    def __init__(self, resp, stream):
+        self.status_code = resp.status
+        self.ok = self.status_code < 400
+        self.headers = resp.headers  # case-insensitive .get()
+        self._resp = resp
+        self.content = None if stream else self._read(resp.read)
+
+    def _read(self, read, *args):
+        try:
+            return read(*args)
+        except (OSError, http.client.HTTPException) as e:
+            raise NetworkError(f"reading the response failed: {e}") from None
+
+    @property
+    def text(self):
+        return self.content.decode("utf-8", errors="replace")
+
+    def json(self):
+        return json.loads(self.content)
+
+    def iter_content(self, chunk_size):
+        with self._resp:
+            while True:
+                chunk = self._read(self._resp.read, chunk_size)
+                if not chunk:
+                    return
+                yield chunk
+
+
+class ApiSession:
+    """Minimal HTTP client (standard library only) that sends every call through the configured proxy and CA bundle.
 
     proxy:    http(s)://[user:password@]host:port for HTTP and HTTPS; empty = HTTPS_PROXY / HTTP_PROXY / NO_PROXY
               environment variables, if any
     caBundle: PEM file (or c_rehash'ed folder) of trusted CAs, e.g. a corporate TLS-inspection CA;
-              empty = REQUESTS_CA_BUNDLE environment variable, else the CAs bundled with requests (certifi)
-    The values are passed per request because requests lets environment variables override
-    session-level proxies/verify; this way the config file always wins.
+              empty = the system trust store (RHEL: /etc/pki/tls/certs/ca-bundle.crt; Windows: certificate store)
     """
 
     def __init__(self, cfg):
-        super().__init__()
-        self.net = {}
-        if cfg.get("proxy"):
-            self.net["proxies"] = {"http": cfg["proxy"], "https": cfg["proxy"]}
-        if cfg.get("caBundle"):
-            if not os.path.exists(cfg["caBundle"]):
-                die(f"caBundle file not found: {cfg['caBundle']}")
-            self.net["verify"] = cfg["caBundle"]
-
-    def request(self, method, url, **kwargs):
-        for key, value in self.net.items():
-            kwargs.setdefault(key, value)
+        self.headers = {"User-Agent": "idmc-cdgc-export"}
+        self.proxy = cfg.get("proxy")
+        ca = cfg.get("caBundle")
+        if ca and not os.path.exists(ca):
+            die(f"caBundle file not found: {ca}")
         try:
-            return super().request(method, url, **kwargs)
-        except requests.exceptions.SSLError as e:
-            die(f"TLS certificate check failed for {url.split('?')[0]}: {e}. If a proxy inspects TLS, "
-                "set caBundle in the config to its CA file (RHEL: /etc/pki/tls/certs/ca-bundle.crt)")
-        except requests.exceptions.ProxyError as e:
-            # still a ConnectionError, so Cdgc.wait() retries it; masked so proxy passwords never reach the log
-            raise requests.ConnectionError(f"proxy error for {url.split('?')[0]}: {mask_url(str(e))}; "
-                                           "check the proxy setting in the config") from None
+            if ca and os.path.isdir(ca):
+                context = ssl.create_default_context(capath=ca)
+            else:
+                context = ssl.create_default_context(cafile=ca or None)
+        except ssl.SSLError as e:
+            die(f"caBundle {ca} is not a PEM certificate file: {e}")
+        proxies = {"http": self.proxy, "https": self.proxy} if self.proxy else None  # None = environment
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies),
+                                                  urllib.request.HTTPSHandler(context=context))
+
+    def get(self, url, **kwargs):
+        return self.request("GET", url, **kwargs)
+
+    def post(self, url, **kwargs):
+        return self.request("POST", url, **kwargs)
+
+    def request(self, method, url, params=None, json=None, headers=None, stream=False, timeout=HTTP_TIMEOUT):
+        """params: dict or list of (name, value); json: request body; stream: read the body via iter_content()."""
+        full_url = f"{url}?{urllib.parse.urlencode(params, doseq=True)}" if params else url
+        all_headers = {**self.headers, **(headers or {})}
+        data = None
+        if json is not None:
+            data = json_module.dumps(json).encode("utf-8")
+            all_headers.setdefault("Content-Type", "application/json")
+        req = urllib.request.Request(full_url, data=data, headers=all_headers, method=method)
+        try:
+            resp = self.opener.open(req, timeout=timeout)
+        except urllib.error.HTTPError as e:  # 4xx/5xx: a normal response for the caller to check
+            resp = e
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
+            reason = getattr(e, "reason", e)
+            if isinstance(reason, ssl.SSLError):
+                die(f"TLS certificate check failed for {url}: {reason}. If a proxy inspects TLS, set caBundle "
+                    "in the config to its CA file (RHEL: /etc/pki/tls/certs/ca-bundle.crt)")
+            hint = "; check the proxy setting in the config" if self.proxy else ""
+            # masked so proxy passwords never reach the log
+            raise NetworkError(f"{method} {url} failed: {mask_url(str(reason))}{hint}") from None
+        return Response(resp, stream)
 
 
 def network_summary(cfg):
@@ -275,11 +339,11 @@ class Cdgc:
         while True:
             try:
                 job = self.job(job_id)
-            except (requests.ConnectionError, requests.Timeout) as e:
+            except NetworkError as e:
                 # network blips (e.g. DNS failures) must not abort a long wait; the job keeps running server-side
                 if time.time() - start > timeout:
                     raise
-                print(f"  [{time.time() - start:5.0f}s] connection error, retrying: {type(e).__name__}")
+                print(f"  [{time.time() - start:5.0f}s] connection error, retrying: {e}")
                 if on_poll:
                     on_poll(f"{last} (connection error, retrying)", time.time() - start)
                 time.sleep(interval)

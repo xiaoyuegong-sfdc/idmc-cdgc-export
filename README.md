@@ -39,17 +39,21 @@ control, as it can hold secrets). Plain `key=value` lines; `#` starts a comment;
 | `caBundle` | empty | CA certificate file (PEM) for verifying the API hosts' TLS certificates, e.g. when a proxy inspects TLS with a corporate CA. Empty = `REQUESTS_CA_BUNDLE` environment variable, else the CAs bundled with `requests` |
 | `exportFolder` | `export` | Folder for exported files (relative to the current folder) |
 | `logFolder` | `logs` | Folder for log files (relative to the current folder) |
-| `username`, `password` | empty | If both are set, each run logs in and writes a fresh JWT to `jwt` |
-| `jwt` | empty | IDMC JWT used when username/password are empty |
+| `username` | empty | If set, each run logs in (password: see [Password](#password)) and caches a fresh JWT in `jwtFile` |
+| `password` | empty | Plain-text password; better leave empty and use one of the other password sources |
+| `passwordFile` | empty | File containing only the password (relative paths: from the config file's folder) |
+| `jwtFile` | `idmc_config.jwt` | Where the JWT of the last login is cached (relative paths: from the config file's folder) |
+| `jwt` | empty | IDMC JWT pasted by hand, used when `username` is empty; empty = the JWT cached in `jwtFile` |
 
 ### Authentication
 
-- **Username and password set:** the script calls the User Login API
+- **`username` set:** the script calls the User Login API
   (`POST {baseUrl}/identity-service/api/v1/Login`), exchanges the `sessionId` for a JWT via the User JWT
-  API (`POST {baseUrl}/identity-service/api/v1/jwt/Token?client_id=idmc_api&nonce=1234`) and saves the
-  JWT back into the config file.
-- **Otherwise:** the `jwt` from the config file is used. The script stops with a clear message if it is
-  missing or expired; paste a fresh JWT and run again.
+  API (`POST {baseUrl}/identity-service/api/v1/jwt/Token?client_id=idmc_api&nonce=1234`) and caches the
+  JWT in `jwtFile` (default `idmc_config.jwt`, created with mode 600 on Linux). The config file itself is
+  never written.
+- **`username` empty:** the `jwt` from the config file is used, else the JWT cached in `jwtFile`. The
+  script stops with a clear message if it is missing or expired; paste a fresh JWT or set `username`.
 
 The org ID and name are read from the JWT. The JWT is sent as `Authorization: Bearer` together with
 `X-INFA-ORG-ID` (CDGC API) and as `INFA-SESSION-ID` (IICS v3 API).
@@ -69,9 +73,26 @@ Authenticate task records which proxy (password masked) and CA bundle were used.
   ```
 - Proxy errors while waiting for an export job are retried like other network errors until `--timeout`.
 
-**Security:** the config file holds a password and/or JWT in plain text. Keep it out of version
-control and shared folders, and prefer the short-lived JWT over a stored password. Log files never
-contain the password or JWT.
+### Password
+
+With `username` set, the password is taken from the first of these sources that is set. Logs and
+console output name the source, never the password.
+
+| # | Source | Use for |
+|---|---|---|
+| 1 | `password` in the config file | Avoid: plain text in a file that tends to get copied around |
+| 2 | systemd credential `idmc_password` (`$CREDENTIALS_DIRECTORY/idmc_password`) | Linux + systemd timer: encrypted at rest, see [Step 4b](#step-4b-or-schedule-with-a-systemd-timer) |
+| 3 | Environment variable `IDMC_PASSWORD` | Manual tests (see [Testing on Windows](#testing-on-windows)), systemd `EnvironmentFile=` |
+| 4 | `passwordFile` | Linux + cron: a file readable only by the service user (`chmod 600`; a warning is printed otherwise) |
+| 5 | Prompt (input hidden) | Manual runs in a terminal; never in cron, systemd or Task Scheduler |
+
+Whatever the source, a script that runs unattended needs a password the server can read, so also: use a
+dedicated IDMC user with only the roles the exports need, and keep the config, `jwtFile` and
+`passwordFile` readable only by that user. A proxy password in `proxy` can be avoided the same way by
+setting `HTTPS_PROXY` in the environment (cron/systemd) instead.
+
+**Security:** log files never contain the password or JWT. The JWT cache file holds a token valid for a
+few hours; keep it private like the password. `.gitignore` excludes `idmc_config.properties` and `*.jwt`.
 
 ## Usage
 
@@ -118,11 +139,63 @@ Network errors while waiting for a job are retried until `--timeout`; the job ke
 1. Copy the folder (scripts, `requirements.txt`, `idmc_config.example.properties`), copy
    `idmc_config.example.properties` to `idmc_config.properties` and run `pip install -r requirements.txt`.
 2. Edit `idmc_config.properties`: set `baseUrl` / `iics.baseApiUrl.v3` for your pod, then either
-   `username` + `password`, or a fresh `jwt`.
+   `username` (password from one of the [password sources](#password), e.g. the prompt), or a fresh `jwt`.
 3. Smoke test with the fast scripts (a few seconds each):
    `python export_all_catalog_sources.py` and `python export_custom_roles_privileges.py`.
 4. Then `python export_business_assets.py` (about 1.5 minutes) and, if needed, the technical asset exports.
 5. Check `logs/` for `Status : SUCCESS` and `export/` for the files.
+
+## Testing on Windows
+
+The scripts run unchanged on Windows (Python 3.9+ from python.org or `winget install Python.Python.3.12`).
+Use PowerShell, cmd or Windows Terminal; `run_scheduled.sh` is for Linux only.
+
+```powershell
+cd C:\path\to\idmc-cdgc-export
+py -3 -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+Copy-Item idmc_config.example.properties idmc_config.properties
+notepad idmc_config.properties          # set username, leave password empty
+```
+
+Behind a TLS-inspecting corporate proxy, set `caBundle` to a PEM file of the corporate root CA (export it
+from `certmgr.msc` as Base-64 X.509), e.g. `caBundle=C:\certs\corporate-ca.pem`. Paths in the config are used
+as-is; backslashes are fine.
+
+Pick one way to supply the password:
+
+**A. Prompt (simplest):** just run a script and type the password; the input is hidden.
+
+```powershell
+.venv\Scripts\python export_all_catalog_sources.py
+# IDMC password for <username>:
+```
+
+The prompt needs a console window. In Git Bash (mintty) the script stops with "no password" instead; use
+PowerShell, or `winpty python ...`, or option B.
+
+**B. Environment variable for the current window**, to run several scripts with one entry:
+
+```powershell
+$env:IDMC_PASSWORD = [Net.NetworkCredential]::new('', (Read-Host 'IDMC password' -AsSecureString)).Password
+.venv\Scripts\python export_custom_roles_privileges.py
+.venv\Scripts\python export_business_assets.py
+Remove-Item Env:IDMC_PASSWORD           # or close the window
+```
+
+**C. Password file readable only by you**, e.g. for Task Scheduler tests:
+
+```powershell
+$f = "$env:USERPROFILE\.idmc\password.txt"
+New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null
+[Net.NetworkCredential]::new('', (Read-Host 'IDMC password' -AsSecureString)).Password |
+    Set-Content -NoNewline -Encoding UTF8 $f
+icacls $f /inheritance:r /grant:r "${env:USERNAME}:F"   # remove inherited access, keep only yours
+# idmc_config.properties: passwordFile=C:\Users\<you>\.idmc\password.txt
+```
+
+The cached JWT (`idmc_config.jwt`) gets the permissions of the script folder, so keep the folder under your
+user profile. After testing, delete the password file if you no longer need it.
 
 ## Scheduling on Linux
 
@@ -149,7 +222,8 @@ If you copied the files from Windows, convert line endings first: `sed -i 's/\r$
 
 ### Step 2: Configure for unattended runs
 
-A JWT expires after a few hours, so a scheduled job must log in itself. Edit `idmc_config.properties`:
+A JWT expires after a few hours, so a scheduled job must log in itself. Copy
+`idmc_config.example.properties` to `idmc_config.properties` and edit it:
 
 ```properties
 baseUrl=https://dm-em.informaticacloud.com
@@ -161,15 +235,23 @@ logFolder=/opt/idmc-cdgc-export/logs
 proxy=http://proxy.example.com:8080
 caBundle=/etc/pki/tls/certs/ca-bundle.crt
 username=<IDMC service user>
-password=<password>
+password=
+# cron: the password file below; systemd timer: leave empty and use the encrypted credential (Step 4b)
+passwordFile=/home/idmc/.idmc/password
 jwt=
 ```
 
-Protect it: the file holds a password and every run writes a fresh JWT into it.
+Keep the password out of the config. Create the password file as the `idmc` user; the input is hidden
+and the file is readable only by `idmc`:
 
 ```bash
-chmod 600 idmc_config.properties
+install -d -m 700 ~/.idmc
+( umask 077; read -rsp "IDMC password: " p; echo; printf '%s' "$p" > ~/.idmc/password; unset p )
+ls -l ~/.idmc/password                  # -rw------- idmc idmc
+chmod 600 idmc_config.properties        # no secrets in it now, but it names the user and paths
 ```
+
+Each login caches the JWT in `idmc_config.jwt` (mode 600) next to the config.
 
 Use a dedicated IDMC user with only the roles the exports need, and a password that does not
 expire (or a reminder to rotate it). Single sign-on (SAML) users cannot use the User Login API.
@@ -241,7 +323,23 @@ User=idmc
 WorkingDirectory=/opt/idmc-cdgc-export
 ExecStart=/opt/idmc-cdgc-export/run_scheduled.sh export_business_assets.py
 TimeoutStartSec=3h
+# IDMC password, encrypted at rest (see below); remove this line if you use passwordFile instead
+LoadCredentialEncrypted=idmc_password:/etc/idmc/idmc_password.cred
 ```
+
+The encrypted credential is the safest password store on RHEL 9 (systemd 252): the file can only be
+decrypted on this server (host key, plus the TPM chip if present), and only for the service run, where the
+script reads it from `$CREDENTIALS_DIRECTORY/idmc_password`. Create it once as root (input is hidden):
+
+```bash
+sudo install -d -m 700 /etc/idmc
+sudo sh -c 'systemd-ask-password "IDMC password:" | systemd-creds encrypt --name=idmc_password - /etc/idmc/idmc_password.cred'
+sudo chmod 600 /etc/idmc/idmc_password.cred
+```
+
+To change the password later, rerun the `systemd-creds encrypt` line. Then remove `passwordFile` from the
+config and delete `~/.idmc/password`; the credential takes precedence anyway. The credential only exists for
+systemd runs, so for manual tests (Step 3) run from a terminal and type the password at the prompt.
 
 `/etc/systemd/system/idmc-export-business-assets.timer`
 ```ini

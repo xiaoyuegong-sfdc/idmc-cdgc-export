@@ -68,7 +68,7 @@ def config_path(config_file, value):
 def read_secret(path, what):
     """Content of a secret file (password or JWT) without the trailing line break."""
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(path, encoding="utf-8-sig") as f:  # -sig: Windows PowerShell 5.1 writes UTF-8 with a BOM
             value = f.read().rstrip("\r\n")
     except OSError as e:
         die(f"cannot read {what}: {e}")
@@ -94,6 +94,18 @@ def warn_if_shared(path):
         print(f"WARNING: {path} is accessible by other users; run: chmod 600 {path}")
 
 
+def interactive():
+    """True if someone can type a password: stdin is a terminal (on Windows a real console; NUL also counts as a tty)."""
+    if not sys.stdin.isatty():
+        return False
+    if os.name != "nt":
+        return True
+    import ctypes
+    import msvcrt
+    handle = msvcrt.get_osfhandle(sys.stdin.fileno())
+    return bool(ctypes.windll.kernel32.GetConsoleMode(handle, ctypes.byref(ctypes.c_ulong())))
+
+
 def find_password(cfg, config_file):
     """Password for the User Login API and a description of its source (for messages and logs).
 
@@ -113,7 +125,7 @@ def find_password(cfg, config_file):
         password = read_secret(path, "passwordFile")
         warn_if_shared(path)
         return password, f"passwordFile {path}"
-    if sys.stdin.isatty():
+    if interactive():
         password = getpass.getpass(f"IDMC password for {cfg['username']}: ")
         if password:
             return password, "prompt"

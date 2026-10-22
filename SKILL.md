@@ -10,12 +10,18 @@ Scripts live next to this file. Read `README.md` for all options; this file says
 ## Before running
 
 1. `pip install -r requirements.txt` if `requests` is missing.
-2. Check `idmc_config.properties` without revealing secrets. Never print, log or echo the `password`
-   or `jwt` values; mask them, e.g. `sed 's/^\(jwt\|password\)=.*/\1=***/' idmc_config.properties`.
-3. Authentication: if `username` and `password` are set, the scripts log in and save a new `jwt`.
-   Otherwise they use `jwt`; a JWT is valid for about 30 minutes to a few hours. If a script fails with
-   "JWT ... expired", ask the user to paste a fresh JWT into the config (or set username/password),
-   then rerun. Do not go looking for other credential files.
+2. If `idmc_config.properties` is missing, copy it from `idmc_config.example.properties`. Check it without
+   revealing secrets. Never print, log or echo the `password` or `jwt` values, nor the content of the
+   `passwordFile`, the JWT cache (`*.jwt`) or `IDMC_PASSWORD`; mask them, e.g.
+   `sed 's/^\(jwt\|password\|proxy\)=..*/\1=***/' idmc_config.properties`.
+3. Authentication: if `username` is set, the scripts log in and cache a new JWT in `jwtFile`
+   (default `idmc_config.jwt`). The password comes from `password`, the systemd credential `idmc_password`,
+   `IDMC_PASSWORD`, `passwordFile`, else a terminal prompt (README "Password"). You cannot answer the
+   prompt: if a run stops with "no password", ask the user to run it themselves (`! python <script>`) or to
+   set `IDMC_PASSWORD` / `passwordFile`; never ask them to type the password into the chat. Without
+   `username`, the scripts use `jwt`, else the cached JWT; a JWT is valid for a few hours. If a script fails
+   with "JWT ... expired", ask the user for a fresh JWT or to set `username`, then rerun. Do not go looking
+   for other credential files.
 4. Network: `TLS certificate check failed` means a TLS-inspecting proxy; ask for its CA file and set
    `caBundle`. Connection or proxy errors: set `proxy` (never print proxy passwords).
 
@@ -49,4 +55,6 @@ Scripts live next to this file. Read `README.md` for all options; this file says
 ## Scheduling
 
 For recurring runs on Linux, follow README.md "Scheduling on Linux": `run_scheduled.sh` via cron or a
-systemd timer, with `username`/`password` in the config (a stored JWT expires) and `chmod 600` on it.
+systemd timer, with `username` in the config (a stored JWT expires) and the password in an encrypted systemd
+credential (timer) or a `chmod 600` `passwordFile` (cron), not in the config. For tests on Windows, see
+README.md "Testing on Windows".

@@ -6,10 +6,10 @@ Usage:
                                      [--config idmc_config.properties]
 
 Steps:
-  1. Authenticate from the config file (baseUrl, username, password, jwt).
-     If username and password are set, call the IDMC User Login API, exchange the
-     sessionId for a JWT via the User JWT API, and save the new JWT back to the
-     config file. Otherwise the jwt from the config file is used.
+  1. Authenticate from the config file (baseUrl, username, jwt; see README "Password").
+     If username is set, call the IDMC User Login API, exchange the sessionId for a
+     JWT via the User JWT API, and cache the new JWT in jwtFile (idmc_config.jwt).
+     Otherwise the jwt from the config file, else the cached JWT, is used.
   2. Start a bulk export job:  POST /data360/search/export/v1/assets   (body {"size": 0} = all matches)
   3. Poll the job until done:  GET  /data360/observable/v1/jobs/{jobId}
   4. Download the export file: GET  /data360/observable/v1/jobs/{jobId}/outputProperties/files/{key}

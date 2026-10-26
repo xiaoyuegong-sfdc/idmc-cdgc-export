@@ -1,6 +1,6 @@
 ---
 name: idmc-cdgc-export
-description: Export Informatica IDMC / CDGC metadata with the bundled Python scripts - business assets, technical assets (all or one catalog source), catalog sources, and custom roles with privileges. Use when the user asks to export, back up, list or summarize CDGC business/technical assets, catalog sources, or IDMC custom roles/privileges, or to authenticate against IDMC with the stored config.
+description: Export Informatica IDMC / CDGC metadata with the bundled Python scripts - business assets, technical assets (all or one catalog source), catalog sources (optionally with their uploaded files), and custom roles with privileges. Use when the user asks to export, back up, list or summarize CDGC business/technical assets, catalog sources or their attachments, or IDMC custom roles/privileges, or to authenticate against IDMC with the stored config.
 ---
 
 # IDMC / CDGC export
@@ -18,10 +18,18 @@ Scripts live next to this file. Read `README.md` for all options; this file says
 3. Authentication: if `username` is set, the scripts log in and cache a new JWT in `jwtFile`
    (default `idmc_config.jwt`). The password comes from `password`, the systemd credential `idmc_password`,
    `IDMC_PASSWORD`, `passwordFile`, else a terminal prompt (README "Password"). You cannot answer the
-   prompt: if a run stops with "no password", ask the user to run it themselves (`! python <script>`) or to
-   set `IDMC_PASSWORD` / `passwordFile`; never ask them to type the password into the chat. Without
-   `username`, the scripts use the JWT in `jwtFile`; a JWT is valid for a few hours. If a script fails
-   with "JWT ... expired", ask the user to put a fresh JWT into that file or to set `username`, then
+   prompt, and neither can the user through `! python <script>`: that shell is not a terminal, so the run
+   stops with "no password" too. Never ask for the password in the chat. Instead:
+   - If `jwtFile` (default `idmc_config.jwt`) still holds a valid JWT from an earlier login, run with a
+     temporary copy of the config outside the project folder, with `username=` empty and `jwtFile` set to
+     the absolute path of that file (forward slashes), via `--config <copy>`; delete the copy afterwards.
+     Check the expiry without printing the token: `jwt_payload(read_secret(path, "JWT"))["exp"]` from
+     `idmc_client`.
+   - Otherwise ask the user to run the script in their own PowerShell or terminal window (answers the
+     prompt and caches a fresh JWT), or to set `IDMC_PASSWORD` / `passwordFile`.
+
+   Without `username`, the scripts use the JWT in `jwtFile`; a JWT is valid for a few hours. If a script
+   fails with "JWT ... expired", ask the user to put a fresh JWT into that file or to set `username`, then
    rerun. Do not go looking for other credential files. There is no `jwt` config key any more; a leftover
    one only prints a warning.
 4. Network: `TLS certificate check failed` means a TLS-inspecting proxy; ask for its CA file and set
@@ -56,6 +64,11 @@ Scripts live next to this file. Read `README.md` for all options; this file says
 - Every run prints `Log written to <path>`; read that log and report `Status`, task results and the
   output file path. For roles, the log's Summary section lists each role with status, privilege count
   and privileges per service.
+- Catalog source attachments (`includeCatalogAttachment=Yes`): the Summary section lists every attachment
+  as `saved` or `FAILED`. Failures do not fail the run; if all of them fail (e.g. HTTP 404), the internal
+  API may have changed, so tell the user and suggest setting the option back to No. No zip is written if
+  no catalog source has an uploaded file. To check a download, list the zip and open the inner file
+  instead of extracting everything.
 - Bulk exports: if the run was interrupted, `logs/<name>_in_progress.log` remains with the job id;
   resume with `--job-id <id> --file-name <name>` instead of starting a new job.
 - Large technical exports arrive as a zip of several `.xlsx` (or `.csv`) files; list the zip contents

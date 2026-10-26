@@ -12,6 +12,10 @@ Same as export_technical_assets.py, but with the query
     Technical Assets with catalog source name "<catalog source name>"
 The file and its log are named Export_Technical_Assets_<catalog source>_<unix timestamp>
 (non-alphanumeric characters in the name replaced by "_").
+
+Backup for export_technical_assets.py, which remains the standard technical asset export. Use this script only if
+exporting the technical assets of all catalog sources runs into performance issues (e.g. the job takes too long or
+times out); then export just the relevant catalog sources with it, one run per catalog source.
 """
 import argparse
 import re

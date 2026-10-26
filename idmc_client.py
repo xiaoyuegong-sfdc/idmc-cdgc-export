@@ -298,6 +298,12 @@ class Cdgc:
                 "set username, or put a fresh JWT into the JWT file")
         self.auth_mode += f"; {network_summary(cfg)}"
         self.export_folder = cfg.get("exportFolder") or DEFAULT_EXPORT_FOLDER
+        # catalog source attachments come from an Informatica internal API, so they are opt-in (default No)
+        include_attachment = (cfg.get("includeCatalogAttachment") or "No").lower()
+        if include_attachment not in ("yes", "no"):
+            print(f"WARNING: includeCatalogAttachment={cfg['includeCatalogAttachment']} in {config_file} "
+                  "is neither Yes nor No; using No")
+        self.include_catalog_attachment = include_attachment == "yes"
         self.org_id = payload.get("current_org_id") or payload["org_id"]
         self.org_name = payload.get("current_org_name") or payload.get("org_name", "")
         # https://dm-em.informaticacloud.com -> https://cdgc-api.dm-em.informaticacloud.com
@@ -370,6 +376,21 @@ class Cdgc:
             for chunk in r.iter_content(chunk_size=1 << 16):
                 f.write(chunk)
         return path
+
+    def download_catalog_attachment(self, catalog_source_id):
+        """Streamed response with the file uploaded to a custom catalog source ("File Details").
+
+        INFORMATICA INTERNAL API: this is the call Metadata Command Center makes for "Last uploaded file". It is
+        not part of the public CDGC API and can change without notice; raises RuntimeError on any error status.
+        """
+        r = self.s.get(f"{self.api}/ccgf-metadata-staging/api/v1/staging/files/download",
+                       params={"serviceFunction": "custom-metadata-staging-producer",
+                               "filePath": f"{catalog_source_id}/{catalog_source_id}.zip"},
+                       headers={"Accept": "*/*"}, stream=True)
+        if not r.ok:
+            r.content = b"".join(r.iter_content(1 << 16))
+            raise RuntimeError(f"HTTP {r.status_code}: {r.text[:200]}")
+        return r
 
 
 def add_export_args(ap, file_name_help):

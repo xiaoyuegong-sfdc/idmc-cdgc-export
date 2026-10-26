@@ -34,10 +34,17 @@ Scripts live next to this file. Read `README.md` for all options; this file says
 |---|---|---|
 | Business assets / glossary | `python export_business_assets.py` | ~1.5 min |
 | All technical assets | `python export_technical_assets.py` | 30+ min, run in the background |
-| Technical assets of one catalog source | `python export_technical_assets_for_single_catalog.py --catalog-source "<exact name>"` | minutes |
+| Technical assets of one catalog source (backup, see below) | `python export_technical_assets_for_single_catalog.py --catalog-source "<exact name>"` | minutes |
 | Catalog sources | `python export_all_catalog_sources.py` | seconds |
 | Custom roles and privileges | `python export_custom_roles_privileges.py` | seconds |
 
+- Technical assets: use `export_technical_assets.py` (all catalog sources) by default. The single-catalog
+  script is a backup, only for exporting the relevant catalog sources when the full export has performance
+  issues (too slow, timeouts), or when the user explicitly asks for one catalog source.
+- Catalog source attachments (uploaded files of custom catalog sources, as
+  `Export_Catalog_Sources_Attachments_<timestamp>.zip`) are only exported with `includeCatalogAttachment=Yes`
+  in the config. It uses an Informatica internal API: tell the user so and do not enable it without their
+  consent (README "Catalog source attachments").
 - Catalog source names must match exactly; get them from the catalog sources export
   (`catalogSources[].name`) if unsure.
 - Roles export excludes system roles and roles created by `mdm-authorization` by default;

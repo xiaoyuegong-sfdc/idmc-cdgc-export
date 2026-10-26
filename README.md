@@ -9,8 +9,8 @@ through the public REST APIs. Each run writes the exported file to an export fol
 |---|---|---|
 | `export_business_assets.py` | All business assets (with stakeholders and relationships) as Excel | CDGC Bulk Export (`knowledgeQuery=Business Assets`) |
 | `export_technical_assets.py` | All technical assets as Excel (large orgs: a zip of several workbooks) | CDGC Bulk Export (`knowledgeQuery=Technical Assets`) |
-| `export_technical_assets_for_single_catalog.py` | Technical assets of one catalog source | CDGC Bulk Export (`Technical Assets with catalog source name "<name>"`) |
-| `export_all_catalog_sources.py` | All catalog sources as JSON | `GET /data360/catalog-source-management/v1/catalogsources` |
+| `export_technical_assets_for_single_catalog.py` | Technical assets of one catalog source; backup for `export_technical_assets.py` (see [below](#technical-assets-of-single-catalog-sources-backup)) | CDGC Bulk Export (`Technical Assets with catalog source name "<name>"`) |
+| `export_all_catalog_sources.py` | All catalog sources as JSON; optionally their uploaded files as a zip ([attachments](#catalog-source-attachments-internal-api)) | `GET /data360/catalog-source-management/v1/catalogsources` |
 | `export_custom_roles_privileges.py` | Custom (non-system) roles with privileges as JSON; summary per role in the log | IICS v3 `GET /public/core/v3/roles` |
 
 Other files:
@@ -52,6 +52,7 @@ control, as it can hold secrets). Plain `key=value` lines; `#` starts a comment;
 | `password` | empty | Plain-text password; better leave empty and use one of the other password sources |
 | `passwordFile` | empty | File containing only the password (relative paths: from the config file's folder) |
 | `jwtFile` | `idmc_config.jwt` | Where the JWT of the last login is cached (relative paths: from the config file's folder); used for authentication when `username` is empty |
+| `includeCatalogAttachment` | `No` | `Yes`: `export_all_catalog_sources.py` also downloads the files uploaded to custom catalog sources. **Uses an Informatica internal API**, see [Catalog source attachments](#catalog-source-attachments-internal-api) |
 
 ### Authentication
 
@@ -117,6 +118,15 @@ python export_all_catalog_sources.py [--filter ColumnName:Operator:Value] [--cus
 python export_custom_roles_privileges.py [--exclude-created-by USER ...]
 ```
 
+### Technical assets of single catalog sources (backup)
+
+`export_technical_assets.py` is the standard way to export technical assets: it exports all catalog sources
+in one job. `export_technical_assets_for_single_catalog.py` is a backup for it and is not meant for regular
+use today. Switch to it only if the full export runs into performance issues (for example the job takes too
+long or hits `--timeout`); then export just the relevant catalog sources, one run per catalog source,
+instead of all of them. Catalog source names must match exactly; take them from the catalog sources export
+(`catalogSources[].name`).
+
 Common options of the bulk export scripts (business / technical assets):
 
 | Option | Default | Meaning |
@@ -129,6 +139,30 @@ Common options of the bulk export scripts (business / technical assets):
 | `--poll-interval` | `10` | Seconds between job status checks |
 | `--timeout` | `7200` | Seconds to wait for the job |
 | `--job-id` | | Resume an existing job instead of starting a new one (pass the same `--file-name`) |
+
+### Catalog source attachments (internal API)
+
+> **Warning:** this option uses an **Informatica internal API** that is not part of the public CDGC REST API.
+> Informatica can change or remove it without notice, so verify that it still works in your org (run once and
+> check the zip) before enabling it, and again after IDMC upgrades. It is off by default; leaving it off has
+> no effect on the catalog source export or any other script.
+
+With `includeCatalogAttachment=Yes`, `export_all_catalog_sources.py` checks each catalog source for an
+uploaded file (option `File Details` in `typeOptions`, e.g. custom catalog sources with Source Type *Upload*)
+and downloads it with the call Metadata Command Center uses for "Last uploaded file":
+
+```
+GET https://cdgc-api.<pod>/ccgf-metadata-staging/api/v1/staging/files/download
+    ?serviceFunction=custom-metadata-staging-producer&filePath=<catalog source id>/<catalog source id>.zip
+```
+
+Each file is saved under its `File Details` name in a folder named after the catalog source, all in one zip
+with the timestamp of the JSON file, e.g. `Export_Catalog_Sources_1793007376.json` and
+`Export_Catalog_Sources_Attachments_1793007376.zip` containing
+`Custom Catalog Source Test1 - xgong/Custom Catalog Source Test1 xgong.zip`. Characters not allowed in
+file names (`\ / : * ? " < > |`) are replaced by `_`. A failed download is printed as a warning and listed
+in the log's Summary section; the run still succeeds and the JSON file is unaffected. No zip is written if
+no catalog source has an uploaded file.
 
 `export_custom_roles_privileges.py` skips system roles (`systemRole: true`) and, by default, custom roles
 created by `mdm-authorization` (provisioned by the MDM apps). `--exclude-created-by` with no value keeps
@@ -300,8 +334,10 @@ MAILTO=""
 20 1 * * *  /opt/idmc-cdgc-export/run_scheduled.sh export_business_assets.py
 # Sundays 02:00: all technical assets (can take 30+ minutes)
 0  2 * * 0  /opt/idmc-cdgc-export/run_scheduled.sh export_technical_assets.py
-# Every 6 hours: one catalog source (quote names with spaces)
-0 */6 * * * /opt/idmc-cdgc-export/run_scheduled.sh export_technical_assets_for_single_catalog.py --catalog-source "xgong - Databricks Demo - Xgong - schema"
+# Backup only, if the full technical export has performance issues: uncomment and add one line per relevant
+# catalog source (quote names with spaces), and remove the export_technical_assets.py line above. Stagger the
+# start times: run_scheduled.sh skips a run while the same script is still running
+# 0  2 * * 0  /opt/idmc-cdgc-export/run_scheduled.sh export_technical_assets_for_single_catalog.py --catalog-source "xgong - Databricks Demo - Xgong - schema"
 ```
 
 Notes:
